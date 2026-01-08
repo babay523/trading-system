@@ -44,22 +44,22 @@ public class OrderServiceImpl implements OrderService {
     @Override
     @Transactional
     public OrderResponse createFromCart(Long userId) {
-        log.debug("Creating order from cart for user {}", userId);
+        log.debug("从购物车为用户 {} 创建订单", userId);
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
 
         List<CartItem> cartItems = cartItemRepository.findByUserId(userId);
         if (cartItems.isEmpty()) {
-            throw new InvalidOperationException("Cart is empty");
+            throw new InvalidOperationException("购物车为空");
         }
 
-        // Get first item's inventory to determine merchant
+        // 获取第一个商品的库存以确定商家
         Inventory firstInventory = inventoryRepository.findBySku(cartItems.get(0).getSku())
                 .orElseThrow(() -> new ResourceNotFoundException("Inventory", cartItems.get(0).getSku()));
         Long merchantId = firstInventory.getMerchantId();
 
-        // Create order
+        // 创建订单
         Order order = Order.builder()
                 .orderNumber(generateOrderNumber())
                 .userId(userId)
@@ -94,14 +94,14 @@ public class OrderServiceImpl implements OrderService {
         order.setTotalAmount(totalAmount);
         Order savedOrder = orderRepository.save(order);
 
-        log.info("Created order {} from cart for user {}", savedOrder.getOrderNumber(), userId);
+        log.info("为用户 {} 从购物车创建订单 {}", savedOrder.getOrderNumber(), userId);
         return toOrderResponse(savedOrder);
     }
 
     @Override
     @Transactional
     public OrderResponse createDirect(Long userId, DirectPurchaseRequest request) {
-        log.debug("Creating direct order for user {}: sku={}, quantity={}",
+        log.debug("为用户 {} 创建直接购买订单: sku={}, quantity={}",
                 userId, request.getSku(), request.getQuantity());
 
         User user = userRepository.findById(userId)
@@ -134,20 +134,20 @@ public class OrderServiceImpl implements OrderService {
         order.addItem(orderItem);
         Order savedOrder = orderRepository.save(order);
 
-        log.info("Created direct order {} for user {}", savedOrder.getOrderNumber(), userId);
+        log.info("为用户 {} 创建直接购买订单 {}", savedOrder.getOrderNumber(), userId);
         return toOrderResponse(savedOrder);
     }
 
     @Override
     @Transactional
     public OrderResponse confirmPayment(Long orderId) {
-        log.debug("Confirming payment for order {}", orderId);
+        log.debug("确认订单 {} 的支付", orderId);
 
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
 
         if (order.getStatus() != OrderStatus.PENDING) {
-            throw new InvalidOperationException("Order is not in PENDING status");
+            throw new InvalidOperationException("订单不在待支付状态");
         }
 
         User user = userRepository.findById(order.getUserId())
@@ -156,14 +156,14 @@ public class OrderServiceImpl implements OrderService {
         Merchant merchant = merchantRepository.findById(order.getMerchantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Merchant", order.getMerchantId()));
 
-        // Check user balance
+        // 检查用户余额
         if (user.getBalance().compareTo(order.getTotalAmount()) < 0) {
             order.setStatus(OrderStatus.CANCELLED);
             orderRepository.save(order);
-            throw new InsufficientBalanceException("Insufficient balance");
+            throw new InsufficientBalanceException("余额不足");
         }
 
-        // Check and reduce inventory for each item
+        // 检查并减少每件商品的库存
         for (OrderItem item : order.getItems()) {
             Inventory inventory = inventoryRepository.findBySku(item.getSku())
                     .orElseThrow(() -> new ResourceNotFoundException("Inventory", item.getSku()));
@@ -171,28 +171,28 @@ public class OrderServiceImpl implements OrderService {
             if (inventory.getQuantity() < item.getQuantity()) {
                 order.setStatus(OrderStatus.CANCELLED);
                 orderRepository.save(order);
-                throw new InsufficientStockException("Insufficient stock for SKU: " + item.getSku());
+                throw new InsufficientStockException("SKU: " + item.getSku() + " 库存不足");
             }
 
             inventory.setQuantity(inventory.getQuantity() - item.getQuantity());
             inventoryRepository.save(inventory);
         }
 
-        // Deduct user balance
+        // 扣除用户余额
         BigDecimal userBalanceBefore = user.getBalance();
         user.setBalance(user.getBalance().subtract(order.getTotalAmount()));
         userRepository.save(user);
 
-        // Add merchant balance
+        // 增加商家余额
         BigDecimal merchantBalanceBefore = merchant.getBalance();
         merchant.setBalance(merchant.getBalance().add(order.getTotalAmount()));
         merchantRepository.save(merchant);
 
-        // Update order status
+        // 更新订单状态
         order.setStatus(OrderStatus.PAID);
         Order savedOrder = orderRepository.save(order);
 
-        // Create transaction records
+        // 创建交易记录
         transactionService.createUserTransaction(
                 user.getId(),
                 TransactionType.PURCHASE,
@@ -211,80 +211,80 @@ public class OrderServiceImpl implements OrderService {
                 order.getId()
         );
 
-        // Clear cart after successful payment
+        // 支付成功后清空购物车
         cartItemRepository.deleteByUserId(order.getUserId());
 
-        log.info("Payment confirmed for order {}", savedOrder.getOrderNumber());
+        log.info("订单 {} 支付确认", savedOrder.getOrderNumber());
         return toOrderResponse(savedOrder);
     }
 
     @Override
     @Transactional
     public OrderResponse ship(Long orderId) {
-        log.debug("Shipping order {}", orderId);
+        log.debug("发货订单 {}", orderId);
 
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
 
         if (order.getStatus() != OrderStatus.PAID) {
-            throw new InvalidOperationException("Order must be PAID to ship");
+            throw new InvalidOperationException("订单必须是已支付状态才能发货");
         }
 
         order.setStatus(OrderStatus.SHIPPED);
         Order savedOrder = orderRepository.save(order);
 
-        log.info("Order {} shipped", savedOrder.getOrderNumber());
+        log.info("订单 {} 已发货", savedOrder.getOrderNumber());
         return toOrderResponse(savedOrder);
     }
 
     @Override
     @Transactional
     public OrderResponse complete(Long orderId) {
-        log.debug("Completing order {}", orderId);
+        log.debug("完成订单 {}", orderId);
 
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
 
         if (order.getStatus() != OrderStatus.SHIPPED) {
-            throw new InvalidOperationException("Order must be SHIPPED to complete");
+            throw new InvalidOperationException("订单必须是已发货状态才能完成");
         }
 
         order.setStatus(OrderStatus.COMPLETED);
         Order savedOrder = orderRepository.save(order);
 
-        log.info("Order {} completed", savedOrder.getOrderNumber());
+        log.info("订单 {} 已完成", savedOrder.getOrderNumber());
         return toOrderResponse(savedOrder);
     }
 
     @Override
     @Transactional
     public OrderResponse cancel(Long orderId) {
-        log.debug("Cancelling order {}", orderId);
+        log.debug("取消订单 {}", orderId);
 
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
 
         if (order.getStatus() != OrderStatus.PENDING) {
-            throw new InvalidOperationException("Only PENDING orders can be cancelled");
+            throw new InvalidOperationException("只能取消待支付的订单");
         }
 
         order.setStatus(OrderStatus.CANCELLED);
         Order savedOrder = orderRepository.save(order);
 
-        log.info("Order {} cancelled", savedOrder.getOrderNumber());
+        log.info("订单 {} 已取消", savedOrder.getOrderNumber());
         return toOrderResponse(savedOrder);
     }
 
     @Override
     @Transactional
     public OrderResponse refund(Long orderId) {
-        log.debug("Refunding order {}", orderId);
+        log.debug("退款订单 {}", orderId);
 
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
 
         if (order.getStatus() != OrderStatus.PAID && order.getStatus() != OrderStatus.SHIPPED) {
-            throw new InvalidOperationException("Only PAID or SHIPPED orders can be refunded");
+            throw new InvalidOperationException("只能退款已支付或已发货的订单");
         }
 
         User user = userRepository.findById(order.getUserId())
@@ -293,21 +293,21 @@ public class OrderServiceImpl implements OrderService {
         Merchant merchant = merchantRepository.findById(order.getMerchantId())
                 .orElseThrow(() -> new ResourceNotFoundException("Merchant", order.getMerchantId()));
 
-        // Return money to user
+        // 退款给用户
         BigDecimal userBalanceBefore = user.getBalance();
         user.setBalance(user.getBalance().add(order.getTotalAmount()));
         userRepository.save(user);
 
-        // Deduct from merchant
+        // 从商家扣款
         BigDecimal merchantBalanceBefore = merchant.getBalance();
         merchant.setBalance(merchant.getBalance().subtract(order.getTotalAmount()));
         merchantRepository.save(merchant);
 
-        // Update order status
+        // 更新订单状态
         order.setStatus(OrderStatus.REFUNDED);
         Order savedOrder = orderRepository.save(order);
 
-        // Create transaction records
+        // 创建交易记录
         transactionService.createUserTransaction(
                 user.getId(),
                 TransactionType.REFUND_IN,
@@ -326,7 +326,7 @@ public class OrderServiceImpl implements OrderService {
                 order.getId()
         );
 
-        log.info("Order {} refunded", savedOrder.getOrderNumber());
+        log.info("订单 {} 已退款", savedOrder.getOrderNumber());
         return toOrderResponse(savedOrder);
     }
 
@@ -360,12 +360,25 @@ public class OrderServiceImpl implements OrderService {
                 .map(this::toOrderResponse);
     }
 
+    /**
+     * 生成订单号
+     * 基于当前时间戳和UUID生成唯一的订单号
+     * 
+     * @return 生成的订单号
+     */
     private String generateOrderNumber() {
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
         String random = UUID.randomUUID().toString().substring(0, 8).toUpperCase();
         return "ORD" + timestamp + random;
     }
 
+    /**
+     * 将订单实体转换为响应对象
+     * 将Order实体对象转换为OrderResponse响应对象
+     * 
+     * @param order 订单实体
+     * @return 订单响应对象
+     */
     private OrderResponse toOrderResponse(Order order) {
         List<OrderItemResponse> itemResponses = order.getItems().stream()
                 .map(this::toOrderItemResponse)
@@ -384,6 +397,13 @@ public class OrderServiceImpl implements OrderService {
                 .build();
     }
 
+    /**
+     * 将订单项实体转换为响应对象
+     * 将OrderItem实体对象转换为OrderItemResponse响应对象
+     * 
+     * @param item 订单项实体
+     * @return 订单项响应对象
+     */
     private OrderItemResponse toOrderItemResponse(OrderItem item) {
         return OrderItemResponse.builder()
                 .id(item.getId())
