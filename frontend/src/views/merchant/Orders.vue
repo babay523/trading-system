@@ -31,6 +31,7 @@
       <el-table :data="orders" v-loading="loading" stripe>
         <el-table-column prop="orderNumber" label="订单号" width="220" />
         <el-table-column prop="userId" label="用户ID" width="100" />
+        <el-table-column prop="username" label="用户名" width="150" />
         <el-table-column label="商品" min-width="200">
           <template #default="{ row }">
             <div v-for="item in row.items" :key="item.id" class="order-item">
@@ -100,6 +101,7 @@
         <el-descriptions :column="2" border>
           <el-descriptions-item label="订单号">{{ currentOrder.orderNumber }}</el-descriptions-item>
           <el-descriptions-item label="用户ID">{{ currentOrder.userId }}</el-descriptions-item>
+          <el-descriptions-item label="用户名">{{ currentOrder.username || '未知用户' }}</el-descriptions-item>
           <el-descriptions-item label="订单状态">
             <el-tag :type="getStatusType(currentOrder.status)">
               {{ getStatusText(currentOrder.status) }}

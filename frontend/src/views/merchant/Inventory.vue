@@ -12,6 +12,7 @@
       <el-table :data="inventory" style="width: 100%">
         <el-table-column prop="sku" label="SKU" width="150" />
         <el-table-column prop="productId" label="商品ID" width="100" />
+        <el-table-column prop="productName" label="商品名称" min-width="150" />
         <el-table-column prop="quantity" label="库存数量" width="120" align="center">
           <template #default="{ row }">
             <el-tag :type="row.quantity > 0 ? 'success' : 'danger'">

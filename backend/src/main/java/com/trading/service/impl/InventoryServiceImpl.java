@@ -4,6 +4,7 @@ import com.trading.dto.request.InventoryAddRequest;
 import com.trading.dto.request.PriceUpdateRequest;
 import com.trading.dto.response.InventoryResponse;
 import com.trading.entity.Inventory;
+import com.trading.entity.Product;
 import com.trading.exception.InvalidOperationException;
 import com.trading.exception.ResourceNotFoundException;
 import com.trading.repository.InventoryRepository;
@@ -17,7 +18,11 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -93,21 +98,37 @@ public class InventoryServiceImpl implements InventoryService {
     public InventoryResponse getBySku(String sku) {
         Inventory inventory = inventoryRepository.findBySku(sku)
                 .orElseThrow(() -> new ResourceNotFoundException("Inventory with SKU: " + sku));
-        return InventoryResponse.fromEntity(inventory);
+        
+        // Fetch product name
+        String productName = productRepository.findById(inventory.getProductId())
+                .map(Product::getName)
+                .orElse(null);
+        
+        return InventoryResponse.fromEntity(inventory, productName);
     }
     
     @Override
     @Transactional(readOnly = true)
     public Page<InventoryResponse> getByMerchant(Long merchantId, Pageable pageable) {
         Page<Inventory> inventories = inventoryRepository.findByMerchantId(merchantId, pageable);
-        return inventories.map(InventoryResponse::fromEntity);
+        List<InventoryResponse> enrichedResponses = enrichInventoryWithProductNames(inventories.getContent());
+        return new org.springframework.data.domain.PageImpl<>(
+                enrichedResponses,
+                pageable,
+                inventories.getTotalElements()
+        );
     }
     
     @Override
     @Transactional(readOnly = true)
     public Page<InventoryResponse> getAll(Pageable pageable) {
         Page<Inventory> inventories = inventoryRepository.findAll(pageable);
-        return inventories.map(InventoryResponse::fromEntity);
+        List<InventoryResponse> enrichedResponses = enrichInventoryWithProductNames(inventories.getContent());
+        return new org.springframework.data.domain.PageImpl<>(
+                enrichedResponses,
+                pageable,
+                inventories.getTotalElements()
+        );
     }
     
     @Override
@@ -118,8 +139,40 @@ public class InventoryServiceImpl implements InventoryService {
             throw new ResourceNotFoundException("Product", productId);
         }
         
-        return inventoryRepository.findByProductId(productId).stream()
-                .map(InventoryResponse::fromEntity)
+        List<Inventory> inventories = inventoryRepository.findByProductId(productId);
+        return enrichInventoryWithProductNames(inventories);
+    }
+    
+    /**
+     * Enrich inventory list with product names
+     * Fetches product names in a single batch query to avoid N+1 query problem
+     * 
+     * @param inventories List of inventory entities to enrich
+     * @return List of InventoryResponse objects with product names populated
+     */
+    private List<InventoryResponse> enrichInventoryWithProductNames(List<Inventory> inventories) {
+        if (inventories == null || inventories.isEmpty()) {
+            return List.of();
+        }
+        
+        // Extract unique product IDs
+        Set<Long> productIds = inventories.stream()
+                .map(Inventory::getProductId)
+                .collect(Collectors.toSet());
+        
+        // Fetch all products in one query
+        List<Product> products = productRepository.findAllById(productIds);
+        
+        // Create productId -> productName map
+        Map<Long, String> productNameMap = products.stream()
+                .collect(Collectors.toMap(Product::getId, Product::getName));
+        
+        // Build responses with product names
+        return inventories.stream()
+                .map(inventory -> {
+                    String productName = productNameMap.get(inventory.getProductId());
+                    return InventoryResponse.fromEntity(inventory, productName);
+                })
                 .toList();
     }
 }

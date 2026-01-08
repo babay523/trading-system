@@ -28,6 +28,8 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -354,29 +356,65 @@ public class OrderServiceImpl implements OrderService {
     public OrderResponse getById(Long orderId) {
         Order order = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
-        return toOrderResponse(order);
+        
+        // 获取用户名
+        String username = userRepository.findById(order.getUserId())
+                .map(User::getUsername)
+                .orElse(null);
+        
+        List<OrderItemResponse> itemResponses = order.getItems().stream()
+                .map(this::toOrderItemResponse)
+                .collect(Collectors.toList());
+
+        return OrderResponse.builder()
+                .id(order.getId())
+                .orderNumber(order.getOrderNumber())
+                .userId(order.getUserId())
+                .username(username)
+                .merchantId(order.getMerchantId())
+                .totalAmount(order.getTotalAmount())
+                .status(order.getStatus())
+                .items(itemResponses)
+                .createdAt(order.getCreatedAt())
+                .updatedAt(order.getUpdatedAt())
+                .build();
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<OrderResponse> getByUser(Long userId, Pageable pageable) {
-        return orderRepository.findByUserId(userId, pageable)
-                .map(this::toOrderResponse);
+        Page<Order> orderPage = orderRepository.findByUserId(userId, pageable);
+        List<OrderResponse> enrichedOrders = enrichOrdersWithUsernames(orderPage.getContent());
+        return new org.springframework.data.domain.PageImpl<>(
+                enrichedOrders,
+                pageable,
+                orderPage.getTotalElements()
+        );
     }
 
     @Override
     @Transactional(readOnly = true)
     public Page<OrderResponse> getByMerchant(Long merchantId, Pageable pageable) {
-        return orderRepository.findByMerchantId(merchantId, pageable)
-                .map(this::toOrderResponse);
+        Page<Order> orderPage = orderRepository.findByMerchantId(merchantId, pageable);
+        List<OrderResponse> enrichedOrders = enrichOrdersWithUsernames(orderPage.getContent());
+        return new org.springframework.data.domain.PageImpl<>(
+                enrichedOrders,
+                pageable,
+                orderPage.getTotalElements()
+        );
     }
     
     @Override
     @Transactional(readOnly = true)
     public Page<OrderResponse> getByMerchantAndStatus(Long merchantId, OrderStatus status, Pageable pageable) {
         log.debug("获取商家 {} 状态为 {} 的订单", merchantId, status);
-        return orderRepository.findByMerchantIdAndStatus(merchantId, status, pageable)
-                .map(this::toOrderResponse);
+        Page<Order> orderPage = orderRepository.findByMerchantIdAndStatus(merchantId, status, pageable);
+        List<OrderResponse> enrichedOrders = enrichOrdersWithUsernames(orderPage.getContent());
+        return new org.springframework.data.domain.PageImpl<>(
+                enrichedOrders,
+                pageable,
+                orderPage.getTotalElements()
+        );
     }
 
     /**
@@ -414,6 +452,54 @@ public class OrderServiceImpl implements OrderService {
                 .createdAt(order.getCreatedAt())
                 .updatedAt(order.getUpdatedAt())
                 .build();
+    }
+
+    /**
+     * 将订单列表转换为响应对象列表，并批量获取用户名
+     * 使用单次批量查询获取所有用户信息，避免N+1查询问题
+     * 
+     * @param orders 订单实体列表
+     * @return 订单响应对象列表，包含用户名
+     */
+    private List<OrderResponse> enrichOrdersWithUsernames(List<Order> orders) {
+        if (orders.isEmpty()) {
+            return List.of();
+        }
+
+        // 提取唯一的用户ID
+        Set<Long> userIds = orders.stream()
+                .map(Order::getUserId)
+                .collect(Collectors.toSet());
+
+        // 批量获取所有用户
+        List<User> users = userRepository.findAllById(userIds);
+
+        // 创建userId到username的映射
+        Map<Long, String> userIdToUsernameMap = users.stream()
+                .collect(Collectors.toMap(User::getId, User::getUsername));
+
+        // 构建包含用户名的订单响应列表
+        return orders.stream()
+                .map(order -> {
+                    String username = userIdToUsernameMap.get(order.getUserId());
+                    List<OrderItemResponse> itemResponses = order.getItems().stream()
+                            .map(this::toOrderItemResponse)
+                            .collect(Collectors.toList());
+
+                    return OrderResponse.builder()
+                            .id(order.getId())
+                            .orderNumber(order.getOrderNumber())
+                            .userId(order.getUserId())
+                            .username(username)  // 可能为null如果用户不存在
+                            .merchantId(order.getMerchantId())
+                            .totalAmount(order.getTotalAmount())
+                            .status(order.getStatus())
+                            .items(itemResponses)
+                            .createdAt(order.getCreatedAt())
+                            .updatedAt(order.getUpdatedAt())
+                            .build();
+                })
+                .collect(Collectors.toList());
     }
 
     /**
