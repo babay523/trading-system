@@ -155,6 +155,7 @@ dist/
 
 # IDE
 .idea/
+.kiro/
 *.iml
 *.ipr
 *.iws
@@ -187,3 +188,4 @@ logs/
 # Temporary files
 *.tmp
 *.temp
+/.kiro/
