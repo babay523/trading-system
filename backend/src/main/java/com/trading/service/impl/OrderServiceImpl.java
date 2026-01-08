@@ -6,6 +6,7 @@ import com.trading.dto.response.OrderResponse;
 import com.trading.entity.*;
 import com.trading.enums.OrderStatus;
 import com.trading.enums.TransactionType;
+import com.trading.exception.ConcurrencyException;
 import com.trading.exception.InsufficientBalanceException;
 import com.trading.exception.InsufficientStockException;
 import com.trading.exception.InvalidOperationException;
@@ -19,6 +20,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import jakarta.persistence.OptimisticLockException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -163,59 +167,74 @@ public class OrderServiceImpl implements OrderService {
             throw new InsufficientBalanceException("余额不足");
         }
 
-        // 检查并减少每件商品的库存
-        for (OrderItem item : order.getItems()) {
-            Inventory inventory = inventoryRepository.findBySku(item.getSku())
-                    .orElseThrow(() -> new ResourceNotFoundException("Inventory", item.getSku()));
+        try {
+            // 检查并减少每件商品的库存
+            for (OrderItem item : order.getItems()) {
+                Inventory inventory = inventoryRepository.findBySku(item.getSku())
+                        .orElseThrow(() -> new ResourceNotFoundException("Inventory", item.getSku()));
 
-            if (inventory.getQuantity() < item.getQuantity()) {
-                order.setStatus(OrderStatus.CANCELLED);
-                orderRepository.save(order);
-                throw new InsufficientStockException("SKU: " + item.getSku() + " 库存不足");
+                // Calculate new quantity before setting
+                int newQuantity = inventory.getQuantity() - item.getQuantity();
+                
+                // Check if new quantity would be negative
+                if (newQuantity < 0) {
+                    order.setStatus(OrderStatus.CANCELLED);
+                    orderRepository.save(order);
+                    throw new InsufficientStockException("SKU: " + item.getSku() + " 库存不足");
+                }
+
+                // Set new quantity - optimistic lock check happens on save
+                // JPA will automatically include WHERE version = ? in the UPDATE statement
+                // If another transaction modified this inventory, OptimisticLockException will be thrown
+                inventory.setQuantity(newQuantity);
+                inventoryRepository.saveAndFlush(inventory);
             }
 
-            inventory.setQuantity(inventory.getQuantity() - item.getQuantity());
-            inventoryRepository.save(inventory);
+            // 扣除用户余额
+            BigDecimal userBalanceBefore = user.getBalance();
+            user.setBalance(user.getBalance().subtract(order.getTotalAmount()));
+            userRepository.save(user);
+
+            // 增加商家余额
+            BigDecimal merchantBalanceBefore = merchant.getBalance();
+            merchant.setBalance(merchant.getBalance().add(order.getTotalAmount()));
+            merchantRepository.save(merchant);
+
+            // 更新订单状态
+            order.setStatus(OrderStatus.PAID);
+            Order savedOrder = orderRepository.save(order);
+
+            // 创建交易记录
+            transactionService.createUserTransaction(
+                    user.getId(),
+                    TransactionType.PURCHASE,
+                    order.getTotalAmount(),
+                    userBalanceBefore,
+                    user.getBalance(),
+                    order.getId()
+            );
+
+            transactionService.createMerchantTransaction(
+                    merchant.getId(),
+                    TransactionType.SALE,
+                    order.getTotalAmount(),
+                    merchantBalanceBefore,
+                    merchant.getBalance(),
+                    order.getId()
+            );
+
+            // 支付成功后清空购物车
+            cartItemRepository.deleteByUserId(order.getUserId());
+
+            log.info("订单 {} 支付确认", savedOrder.getOrderNumber());
+            return toOrderResponse(savedOrder);
+            
+        } catch (OptimisticLockException | ObjectOptimisticLockingFailureException e) {
+            // Concurrent modification detected - rollback happens automatically
+            order.setStatus(OrderStatus.CANCELLED);
+            orderRepository.save(order);
+            throw new ConcurrencyException("库存已被其他交易更新，请重试");
         }
-
-        // 扣除用户余额
-        BigDecimal userBalanceBefore = user.getBalance();
-        user.setBalance(user.getBalance().subtract(order.getTotalAmount()));
-        userRepository.save(user);
-
-        // 增加商家余额
-        BigDecimal merchantBalanceBefore = merchant.getBalance();
-        merchant.setBalance(merchant.getBalance().add(order.getTotalAmount()));
-        merchantRepository.save(merchant);
-
-        // 更新订单状态
-        order.setStatus(OrderStatus.PAID);
-        Order savedOrder = orderRepository.save(order);
-
-        // 创建交易记录
-        transactionService.createUserTransaction(
-                user.getId(),
-                TransactionType.PURCHASE,
-                order.getTotalAmount(),
-                userBalanceBefore,
-                user.getBalance(),
-                order.getId()
-        );
-
-        transactionService.createMerchantTransaction(
-                merchant.getId(),
-                TransactionType.SALE,
-                order.getTotalAmount(),
-                merchantBalanceBefore,
-                merchant.getBalance(),
-                order.getId()
-        );
-
-        // 支付成功后清空购物车
-        cartItemRepository.deleteByUserId(order.getUserId());
-
-        log.info("订单 {} 支付确认", savedOrder.getOrderNumber());
-        return toOrderResponse(savedOrder);
     }
 
     @Override
