@@ -1,0 +1,300 @@
+spring:
+  application:
+    name: trading-system
+  
+  # Database Configuration
+  datasource:
+    url: jdbc:h2:mem:tradingdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: 
+  
+  # H2 Console (for development)
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: create
+    show-sql: true
+    defer-datasource-initialization: true
+    properties:
+      hibernate:
+        format_sql: true
+        dialect: org.hibernate.dialect.H2Dialect
+  
+  # SQL Initialization
+  sql:
+    init:
+      mode: always
+
+# Server Configuration
+server:
+  port: 8080
+  servlet:
+    context-path: /
+  error:
+    include-message: always
+    include-binding-errors: always
+
+# Management and Actuator Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# Logging Configuration
+logging:
+  level:
+    root: INFO
+    com.trading: DEBUG
+    com.trading.security: DEBUG
+    org.springframework.web: INFO
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql.BasicBinder: TRACE
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Settlement Job Configuration
+trading:
+  settlement:
+    cron: "0 0 0 * * ?"  # Default: midnight every day
+  
+  # Security Configuration
+  security:
+    jwt:
+      secret-key: ${JWT_SECRET_KEY:TradingSystemSecureJwtSecretKey2024ForDevelopmentEnvironmentOnly}
+      expiration: ${JWT_EXPIRATION:86400000} # 24 hours in milliseconds
+      issuer: ${JWT_ISSUER:trading-system}
+      header: ${JWT_HEADER:Authorization}
+      prefix: ${JWT_PREFIX:Bearer }
+      algorithm: ${JWT_ALGORITHM:HS256}
+      refresh-expiration: ${JWT_REFRESH_EXPIRATION:604800000} # 7 days in milliseconds
+    
+    authentication:
+      enabled: ${SECURITY_ENABLED:true}
+      max-login-attempts: ${MAX_LOGIN_ATTEMPTS:5}
+      lockout-duration: ${LOCKOUT_DURATION:900000} # 15 minutes in milliseconds
+    
+    cors:
+      enabled: ${CORS_ENABLED:true}
+      allowed-origins: ${CORS_ORIGINS:http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000,http://localhost:5173}
+      allowed-methods: ${CORS_METHODS:GET,POST,PUT,DELETE,OPTIONS,PATCH}
+      allowed-headers: ${CORS_HEADERS:Authorization,Content-Type,X-Requested-With,Accept,Origin,Access-Control-Request-Method,Access-Control-Request-Headers}
+      exposed-headers: ${CORS_EXPOSED_HEADERS:Authorization,Content-Disposition}
+      allow-credentials: ${CORS_CREDENTIALS:true}
+      max-age: ${CORS_MAX_AGE:3600}
+    
+    endpoints:
+      public-endpoints:
+        - /api/v1/merchants/register
+        - /api/v1/merchants/login
+        - /api/v1/auth/login
+        - /api/v1/auth/refresh
+        - /api/v1/products/**
+        - /api/v1/users/register
+        - /api/v1/users/login
+        - /h2-console/**
+        - /actuator/health
+        - /actuator/info
+        - /error
+        - /favicon.ico
+      
+      protected-endpoints:
+        - /api/v1/merchants/{id}/**
+        - /api/v1/cart/**
+        - /api/v1/orders/**
+        - /api/v1/auth/logout
+        - /api/v1/auth/validate
+        - /api/v1/auth/current
+    
+    # Security Headers
+    headers:
+      frame-options: ${SECURITY_FRAME_OPTIONS:DENY}
+      content-type-options: ${SECURITY_CONTENT_TYPE_OPTIONS:nosniff}
+      xss-protection: ${SECURITY_XSS_PROTECTION:1; mode=block}
+      referrer-policy: ${SECURITY_REFERRER_POLICY:strict-origin-when-cross-origin}
+      
+    # Rate Limiting (for future implementation)
+    rate-limit:
+      enabled: ${RATE_LIMIT_ENABLED:false}
+      requests-per-minute: ${RATE_LIMIT_RPM:60}
+      
+    # Audit Logging
+    audit:
+      enabled: ${AUDIT_ENABLED:true}
+      log-successful-auth: ${AUDIT_LOG_SUCCESS:true}
+      log-failed-auth: ${AUDIT_LOG_FAILURES:true}
+      log-access-denied: ${AUDIT_LOG_ACCESS_DENIED:true}
+
+---
+# Development Profile
+spring:
+  config:
+    activate:
+      on-profile: dev
+  
+  # Development-specific database settings
+  datasource:
+    url: jdbc:h2:mem:devdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+  
+  h2:
+    console:
+      enabled: true
+      settings:
+        web-allow-others: true
+  
+  jpa:
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+# Development Logging
+logging:
+  level:
+    root: INFO
+    com.trading: DEBUG
+    com.trading.security: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web: DEBUG
+
+# Development Security Settings
+trading:
+  security:
+    jwt:
+      expiration: 3600000 # 1 hour for development
+      # 使用与默认环境相同的密钥，避免重启后token失效
+      secret-key: ${JWT_SECRET_KEY:TradingSystemSecureJwtSecretKey2024ForDevelopmentEnvironmentOnly}
+    authentication:
+      enabled: true
+      max-login-attempts: 10 # More lenient for development
+    cors:
+      enabled: true
+      allowed-origins: "http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000,http://localhost:5173"
+    audit:
+      enabled: true
+      log-successful-auth: true
+
+---
+# Production Profile
+spring:
+  config:
+    activate:
+      on-profile: prod
+  
+  datasource:
+    url: jdbc:mysql://localhost:3306/tradingdb?useSSL=false&serverTimezone=UTC
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+  
+  h2:
+    console:
+      enabled: false
+  
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+
+# Production Logging
+logging:
+  level:
+    root: WARN
+    com.trading: INFO
+    com.trading.security: INFO
+  file:
+    name: /var/log/trading-system/application.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 30
+
+# Production Security Settings
+trading:
+  security:
+    jwt:
+      expiration: 86400000 # 24 hours for production
+      secret-key: ${JWT_SECRET_KEY} # Must be provided via environment variable
+      refresh-expiration: 604800000 # 7 days
+    authentication:
+      enabled: true
+      max-login-attempts: 3 # Strict for production
+      lockout-duration: 1800000 # 30 minutes
+    cors:
+      enabled: true
+      allowed-origins: ${CORS_ORIGINS} # Must be provided via environment variable
+      max-age: 86400 # 24 hours
+    headers:
+      frame-options: DENY
+      content-type-options: nosniff
+      xss-protection: "1; mode=block"
+    rate-limit:
+      enabled: true
+      requests-per-minute: 30
+    audit:
+      enabled: true
+      log-successful-auth: false # Only log failures in production
+      log-failed-auth: true
+      log-access-denied: true
+
+# Production Server Configuration
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    session:
+      timeout: 30m
+  compression:
+    enabled: true
+  http2:
+    enabled: true
+
+---
+# Test Profile
+spring:
+  config:
+    activate:
+      on-profile: test
+  
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+  
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+
+# Test Logging
+logging:
+  level:
+    root: WARN
+    com.trading: DEBUG
+    com.trading.security: DEBUG
+
+# Test Security Settings
+trading:
+  security:
+    jwt:
+      expiration: 3600000 # 1 hour for testing
+      secret-key: "test-secret-key-must-be-at-least-32-characters-long-for-testing-purposes"
+    authentication:
+      enabled: false # Disable for integration tests
+      max-login-attempts: 100 # Very lenient for tests
+    cors:
+      enabled: true
+      allowed-origins: "*"
+    audit:
+      enabled: false # Disable audit logging in tests
