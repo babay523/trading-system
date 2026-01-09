@@ -113,6 +113,7 @@ cd frontend && npm run dev
 2. 访问 http://localhost:5173/merchant/register 注册商家
 3. 商家登录后可以创建商品和添加库存
 4. 用户登录后可以浏览商品、加入购物车、下单支付
+5. 也可以使用普通用户 user_alice:password123、merchant_digital:password123 验证
 
 ## API 文档
 
